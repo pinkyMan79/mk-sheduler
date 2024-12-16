@@ -4,7 +4,11 @@ import com.google.api.services.sheets.v4.Sheets;
 import com.google.api.services.sheets.v4.model.ValueRange;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.TelegramBotsApi;
+import org.telegram.telegrambots.meta.api.methods.groupadministration.GetChatMember;
+import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.Update;
+import org.telegram.telegrambots.meta.api.objects.User;
+import org.telegram.telegrambots.meta.api.objects.chatmember.ChatMember;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.updatesreceivers.DefaultBotSession;
 
@@ -17,6 +21,7 @@ import static one.terenin.TimeUtil.checkTimeOverlaps;
 public class GroupBot extends TelegramLongPollingBot {
     private static final String SPREADSHEET_ID = "1mbORWzUo8omx6VW1quiF5SUg4prEvsCF2U3EaMqnKvw";
     private static Sheets sheetsService;
+    private static final long ALLOWED_CHAT_ID = -1001874565795L;
 
     public GroupBot() throws IOException {
         sheetsService = getSheetsService();
@@ -34,18 +39,55 @@ public class GroupBot extends TelegramLongPollingBot {
         return "7550025393:AAFCLxYu2OJQWpJE-mcNw7QrSYUz9dcS47c";
     }
 
+    private boolean isUserAllowed(Long userId) {
+        try {
+            GetChatMember getChatMember = new GetChatMember(String.valueOf(ALLOWED_CHAT_ID), userId);
+            ChatMember member = execute(getChatMember);
+            String status = member.getStatus();
+            return "member".equals(status) || "administrator".equals(status) || "creator".equals(status);
+        } catch (TelegramApiException e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+
     @Override
     public void onUpdateReceived(Update update) {
         if (update.hasMessage() && update.getMessage().hasText()) {
-            String messageText = update.getMessage().getText();
-            System.out.println(messageText);
-            String username = update.getMessage().getFrom().getUserName();
-            if (username == null) username = update.getMessage().getFrom().getFirstName();
 
-            if (messageText.matches("Занимаю мк с \\d{2}:\\d{2} до \\d{2}:\\d{2} \\d{2}.\\d{2}.\\d{2}")) {
-                acceptRecord(update, messageText, username);
-            } else if (messageText.startsWith("Отменяю запись мк с")) {
-                revokeRecord(update, messageText, username);
+            User user = update.getMessage().getFrom();
+            Long chatId = update.getMessage().getChatId();
+
+            if (isUserAllowed(user.getId())) {
+                // Обработка запроса для авторизованных пользователей
+                try {
+                    String messageText = update.getMessage().getText();
+                    System.out.println(messageText);
+                    String username = update.getMessage().getFrom().getUserName();
+                    if (username == null) username = update.getMessage().getFrom().getFirstName();
+
+                    if (messageText.matches("Занимаю мк с \\d{2}:\\d{2} до \\d{2}:\\d{2} \\d{2}.\\d{2}.\\d{2}")) {
+                        acceptRecord(update, messageText, username);
+                    } else if (messageText.startsWith("Отменяю запись мк с")) {
+                        revokeRecord(update, messageText, username);
+                    }
+                    execute(SendMessage.builder()
+                            .chatId(chatId.toString())
+                            .text("Ваш запрос обработан")
+                            .build());
+                } catch (TelegramApiException e) {
+                    e.printStackTrace();
+                }
+            } else {
+                // Ответ для неавторизованных пользователей
+                try {
+                    execute(SendMessage.builder()
+                            .chatId(chatId.toString())
+                            .text("Извините, доступ запрещён. Вы не музыкантик.")
+                            .build());
+                } catch (TelegramApiException e) {
+                    e.printStackTrace();
+                }
             }
         }
     }
